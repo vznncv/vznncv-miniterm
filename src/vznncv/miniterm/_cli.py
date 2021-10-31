@@ -5,7 +5,7 @@ import re
 import sys
 import time
 from functools import partial
-from typing import Union
+from typing import Union, List
 
 import serial.tools.list_ports
 
@@ -102,7 +102,8 @@ class SerialPortSearcher:
             'Filter represent json object {"k1": "v1", "k2": "v2", ... } or string k1=v1&&k2=v2&&... with '
             'the following fields:')
         for field_name, field_definition in cls._FILED_FILTERS.items():
-            help_lines.append(f'- {field_name} - {field_definition["description"]}')
+            help_lines.append(f'- {field_name} - {field_definition["description"]};')
+        help_lines.append('Filter can be specified multiple times to match device against any one.')
         return '\n'.join(help_lines)
 
     _KV_FILTER_RE = re.compile(r'^(?P<name>[\w]+)={1,2}(?P<value>[\w-]+)$')
@@ -123,26 +124,48 @@ class SerialPortSearcher:
             result[m.group('name')] = m.group('value')
         return result
 
-    def __init__(self, filter_info: Union[dict, str, None], no_input: bool = True):
+    @classmethod
+    def _parse_scalar_filter(cls, filter_info: Union[None, str, dict]) -> dict:
         if filter_info is None:
-            filter_info = {}
+            return {}
         elif isinstance(filter_info, str):
-            filter_info = self._load_filter_info_from_str(filter_info)
-        self._raw_filter_info = filter_info
-        self._filter_info = {}
+            return cls._load_filter_info_from_str(filter_info)
+        elif isinstance(filter_info, dict):
+            return filter_info
+        else:
+            raise ValueError(f"Invalid filter: {filter_info}")
+
+    def __init__(self, filter_info: Union[None, str, dict, List[Union[dict, str]]], no_input: bool = True):
+        if filter_info is None or isinstance(filter, (str, dict)):
+            filters_info = [self._parse_scalar_filter(filter_info)]
+        elif isinstance(filter_info, list):
+            filters_info = [self._parse_scalar_filter(item) for item in filter_info]
+        else:
+            raise ValueError(f"Invalid filter: {filter_info}")
+
+        self._raw_filter_info = filters_info
+        self._filters_info = []
         self._no_input = no_input
         # check filter definition
-        for k, v in filter_info.items():
-            k = k.lower()
-            if k not in self._FILED_FILTERS:
-                raise ValueError(f"Unknown filter field \"{k}\"")
-            try:
-                self._filter_info[k] = self._FILED_FILTERS[k]['type'](v)
-            except Exception as e:
-                raise ValueError(f"Invalid value \"{v}\" of field \"{k}\"") from e
+        for filter_info in filters_info:
+            result_filter_info = {}
+            self._filters_info.append(result_filter_info)
+            for k, v in filter_info.items():
+                k = k.lower()
+                if k not in self._FILED_FILTERS:
+                    raise ValueError(f"Unknown filter field \"{k}\"")
+                try:
+                    result_filter_info[k] = self._FILED_FILTERS[k]['type'](v)
+                except Exception as e:
+                    raise ValueError(f"Invalid value \"{v}\" of field \"{k}\"") from e
 
     def _format_filter_info(self):
-        return "serial filter {}".format(' and '.join(f'{k} == {v}' for k, v in self._filter_info.items()))
+        filter_components = [
+            ' and '.join(f'{k} == {v}' for k, v in filter_info.items())
+            for filter_info in self._filters_info
+        ]
+        filter_str = ' or '.join(map('({})'.format, filter_components))
+        return f"serial filters {filter_str}"
 
     class ResolveError(ValueError):
         pass
@@ -150,13 +173,21 @@ class SerialPortSearcher:
     def _filter_impl(self, ports):
         matched_ports = []
         for port in ports:
-            for field_name, expected_value in self._filter_info.items():
-                filter_definition = self._FILED_FILTERS[field_name]
-                port_value = getattr(port, filter_definition['port_info_field'])
-                if expected_value != port_value:
+
+            match_flag = False
+            for filter_info in self._filters_info:
+                for field_name, expected_value in filter_info.items():
+                    filter_definition = self._FILED_FILTERS[field_name]
+                    port_value = getattr(port, filter_definition['port_info_field'])
+                    if expected_value != port_value:
+                        break
+                else:
+                    match_flag = True
+                if match_flag:
                     break
-            else:
+            if match_flag:
                 matched_ports.append(port)
+
         return matched_ports
 
     def filter(self):
@@ -208,7 +239,8 @@ def main(args=None):
     parser.add_argument('port', nargs='?', help='Serial port')
     parser.add_argument('--baudrate', type=int, default=_DEFAULT_BAUDRATE, help='Serial port baud rate')
     parser.add_argument('--eol', default='lf', help='End of line transformation', choices=['crlf', 'lf', 'cr'])
-    parser.add_argument('--filter', help=f'Serial port filter expression\n{SerialPortSearcher.format_filter_help()}')
+    parser.add_argument('--filter', nargs='*',
+                        help=f'Serial port filter expression\n{SerialPortSearcher.format_filter_help()}')
     parser.add_argument('--no-input', action='store_true', help="Don't user interactive input to resolve port")
     parser.add_argument('--list-ports', action='store_true', help='list ports instead of terminal running')
 
