@@ -239,7 +239,7 @@ def main(args=None):
     parser.add_argument('port', nargs='?', help='Serial port')
     parser.add_argument('--baudrate', type=int, default=_DEFAULT_BAUDRATE, help='Serial port baud rate')
     parser.add_argument('--eol', default='lf', help='End of line transformation', choices=['crlf', 'lf', 'cr'])
-    parser.add_argument('--filter', nargs='*',
+    parser.add_argument('--filter', action='append',
                         help=f'Serial port filter expression\n{SerialPortSearcher.format_filter_help()}')
     parser.add_argument('--no-input', action='store_true', help="Don't user interactive input to resolve port")
     parser.add_argument('--list-ports', action='store_true', help='list ports instead of terminal running')
