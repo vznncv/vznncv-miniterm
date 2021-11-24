@@ -243,6 +243,7 @@ def main(args=None):
                         help=f'Serial port filter expression\n{SerialPortSearcher.format_filter_help()}')
     parser.add_argument('--no-input', action='store_true', help="Don't user interactive input to resolve port")
     parser.add_argument('--list-ports', action='store_true', help='list ports instead of terminal running')
+    parser.add_argument('--output-file', help='save output into given file')
 
     parsed_args = parser.parse_args(args)
     device = parsed_args.port
@@ -263,5 +264,6 @@ def main(args=None):
     sys.exit(_miniterm_entrypoint(
         device=device,
         baudrate=parsed_args.baudrate,
-        eol=parsed_args.eol
+        eol=parsed_args.eol,
+        output_file=parsed_args.output_file
     ))

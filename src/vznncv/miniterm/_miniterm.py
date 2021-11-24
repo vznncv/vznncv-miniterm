@@ -161,7 +161,8 @@ def _check_device(port: str) -> ListPortInfo:
 
 
 class _SerialOutput(asyncio.Protocol):
-    def __init__(self, ps: InteractiveShell, transform: Transform, loop: asyncio.AbstractEventLoop):
+    def __init__(self, ps: InteractiveShell, transform: Transform, loop: asyncio.AbstractEventLoop,
+                 output_file: Optional[str] = None):
         super().__init__()
         self._ps: InteractiveShell = ps
         self._transform: Transform = transform
@@ -169,10 +170,21 @@ class _SerialOutput(asyncio.Protocol):
         self._transport: Optional[serial_asyncio.SerialTransport] = None
         self._buf = []
         self._newline_sep = transform.tx('\n').encode('utf-8')[0:1]
+        self._output_file_path = os.path.abspath(output_file) if output_file is not None else None
+        self._output_file_obj = None
 
     def connection_made(self, transport: serial_asyncio.SerialTransport):
         self._transport = transport
         self._buf.clear()
+        if self._output_file_path is not None and self._output_file_obj is None:
+            self._output_file_obj = open(self._output_file_path, 'w', encoding='utf-8')
+
+            async def _sync_output_file():
+                while self._output_file_obj is not None:
+                    await asyncio.sleep(2)
+                    self._output_file_obj.flush()
+
+            asyncio.ensure_future(_sync_output_file(), loop=self._loop)
 
     def _consume_data(self, data):
         data_blocks = data.split(self._newline_sep)
@@ -184,6 +196,10 @@ class _SerialOutput(asyncio.Protocol):
 
             line = raw_line.decode(encoding='utf-8', errors="ignore")
             line = self._transform.rx(line)
+
+            if self._output_file_obj is not None:
+                self._output_file_obj.write(line)
+
             asyncio.ensure_future(self._ps.write_line_async(line), loop=self._loop)
 
     def data_received(self, data):
@@ -191,6 +207,10 @@ class _SerialOutput(asyncio.Protocol):
 
     def connection_lost(self, exc):
         self._consume_data(self._newline_sep)
+        if self._output_file_obj is not None:
+            self._output_file_obj.close()
+            self._output_file_obj = None
+
         self._transport.loop.stop()
         self._transport = None
         self._buf.clear()
@@ -207,11 +227,12 @@ async def _process_input_async(ps: InteractiveShell, transport: serial_asyncio.S
         transport.write(tx_data)
 
 
-async def _async_serial_console(ps: InteractiveShell, port: str, baudrate: int, transform: Transform):
+async def _async_serial_console(ps: InteractiveShell, port: str, baudrate: int, transform: Transform,
+                                output_file: Optional[str] = None):
     loop = asyncio.get_event_loop()
     transport, protocol = await serial_asyncio.create_serial_connection(
         loop=loop,
-        protocol_factory=lambda: _SerialOutput(ps=ps, transform=transform, loop=loop),
+        protocol_factory=lambda: _SerialOutput(ps=ps, transform=transform, loop=loop, output_file=output_file),
         url=port,
         baudrate=baudrate
     )
@@ -228,13 +249,14 @@ def _clear_tty_settings():
 # CLI
 ##
 
-def miniterm(device: str, baudrate: int, eol='lf'):
+def miniterm(device: str, baudrate: int, eol='lf', output_file: Optional[str] = None):
     """
     Simple interactive line-buffered terminal.
 
     :param device: device
     :param baudrate: baudrate
     :param eol: end of line symbol
+    :param output_file: optional file to save console output
     :return:
     """
     # resolve device description if it's available
@@ -258,12 +280,14 @@ def miniterm(device: str, baudrate: int, eol='lf'):
         input_color='#1642C7'
     )
     try:
-        ps.write_sync(f'Connect to serial port.\n'
-                      f'- device: {device} ({device_description})\n'
-                      f'- baudrate: {baudrate}\n'
-                      f'- eol: {eol}\n'
-                      f'Use Ctrl+R to reset screen\n'
-                      f'Use Ctrl+C to exit\n')
+        ps.write_sync(f'Connect to serial port.\n')
+        ps.write_sync(f'- device: {device} ({device_description})\n')
+        ps.write_sync(f'- baudrate: {baudrate}\n')
+        ps.write_sync(f'- eol: {eol}\n')
+        if output_file is not None:
+            ps.write_sync(f'- output file: {output_file}\n')
+        ps.write_sync(f'Use Ctrl+R to reset screen\n')
+        ps.write_sync(f'Use Ctrl+C to exit\n')
         loop = asyncio.get_event_loop()
 
         # configure exception handler to suppress KeyboardInterrupt messages
@@ -278,7 +302,8 @@ def miniterm(device: str, baudrate: int, eol='lf'):
             ps=ps,
             port=device,
             baudrate=baudrate,
-            transform=transform
+            transform=transform,
+            output_file=output_file
         ))
         loop.run_forever()
     except KeyboardInterrupt:
