@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - Add support of multiple `--filter` options.
 - Add `--output-file` option to save serial output into file.
+### Fixed
+- Fix empty symbols removing before output.
 
 ## [0.1.0] - 2021-04-03
 ### Added

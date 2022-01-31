@@ -4,6 +4,7 @@ Line buffered version of serial.tools.miniterm.
 import asyncio
 import logging
 import os.path
+import re
 import shutil
 import subprocess
 import sys
@@ -76,7 +77,7 @@ class InteractiveShell(prompt_toolkit.PromptSession):
 
     async def write_line_async(self, text):
         text = self._cleanup_text(text)
-        text = text.strip()
+        text = text.rstrip()
         async with in_terminal():
             prompt_toolkit.print_formatted_text(FormattedText([(self._async_output_color, text)]), end='\n')
 
@@ -170,6 +171,7 @@ class _SerialOutput(asyncio.Protocol):
         self._transport: Optional[serial_asyncio.SerialTransport] = None
         self._buf = []
         self._newline_sep = transform.tx('\n').encode('utf-8')[0:1]
+        self._newline_sep_re = re.compile(b'\r\n|\n|\r')
         self._output_file_path = os.path.abspath(output_file) if output_file is not None else None
         self._output_file_obj = None
 
@@ -187,7 +189,7 @@ class _SerialOutput(asyncio.Protocol):
             asyncio.ensure_future(_sync_output_file(), loop=self._loop)
 
     def _consume_data(self, data):
-        data_blocks = data.split(self._newline_sep)
+        data_blocks = self._newline_sep_re.split(data)
         self._buf.append(data_blocks[0])
         for next_block in data_blocks[1:]:
             raw_line = b''.join(self._buf)
